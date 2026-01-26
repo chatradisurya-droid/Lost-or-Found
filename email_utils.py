@@ -1,50 +1,69 @@
 import smtplib
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import streamlit as st
 
-# ==========================================
-# 🔧 ADMIN SETUP
-# ==========================================
-SENDER_EMAIL = "chatradi.surya@gmail.com"  
-SENDER_PASSWORD = "vkhl nnzd uhcx bpft" 
-# ==========================================
+# SETUP: Get credentials from Streamlit Secrets
+# If running locally without secrets, replace these with actual strings temporarily
+EMAIL_SENDER = "chatradi.surya@gmail.com" 
+EMAIL_PASSWORD = "your-app-password-here" # Google App Password
 
-def send_email_core(to_email, subject, body):
+def send_notification(to_email, subject, body):
     try:
-        msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = to_email
+        msg = MIMEText(body)
         msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
+        msg['From'] = EMAIL_SENDER
+        msg['To'] = to_email
 
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
-        server.quit()
+        # Connect to Gmail Server
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp_server:
+            smtp_server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            smtp_server.sendmail(EMAIL_SENDER, to_email, msg.as_string())
         return True
     except Exception as e:
         print(f"Email Error: {e}")
         return False
 
-def send_match_alert(current_user_email, matched_user_email, item_name):
+def trigger_match_emails(current_user_email, matched_user_email, item_name, match_score, current_contact, matched_contact):
     """
-    Sends notifications to BOTH parties.
-    1. To the person who just posted (Current User)
-    2. To the person who posted previously (Matched User)
+    Sends two emails:
+    1. To the Current User: "We found a match! Here is their contact."
+    2. To the Matched User: "Someone found your item! Here is their contact."
     """
     
-    # 1. Email to ME (The one who just clicked submit)
-    subj_me = f"✅ Match Found: {item_name}"
-    body_me = f"Good news! The item you just reported ('{item_name}') matches an existing post in our database.\n\nPlease check the 'Matches' page in the app to verify."
-    send_email_core(current_user_email, subj_me, body_me)
+    # Email 1: To the Person who just submitted
+    subject_1 = f"🎯 Match Found: {item_name} ({match_score}% Confidence)"
+    body_1 = f"""
+    Hello!
+    
+    Good news! We found a post that matches your report for "{item_name}".
+    
+    Match Details:
+    --------------------------------
+    Confidence: {match_score}%
+    Contact the other person: {matched_contact}
+    --------------------------------
+    
+    Please verify carefully before exchanging items.
+    
+    - Lost & Found Team
+    """
+    send_notification(current_user_email, subject_1, body_1)
 
-    # 2. Email to THEM (The one who posted earlier)
-    subj_them = f"🔔 New Match Alert: {item_name}"
-    body_them = f"Update: Someone just reported an item that matches your post for '{item_name}'.\n\nPlease log in to SmartCampus to check the details."
-    send_email_core(matched_user_email, subj_them, body_them)
-
-def send_contact_details(recipient_email, contact_info, item_name):
-    subj = f"📞 Contact Details: {item_name}"
-    body = f"You confirmed the match for '{item_name}'.\n\nHere is the owner's contact info:\n{contact_info}\n\nPlease reach out to arrange the return."
-    send_email_core(recipient_email, subj, body)
+    # Email 2: To the Person from the database (The older post)
+    subject_2 = f"🔔 Update on your {item_name} Report"
+    body_2 = f"""
+    Hello!
+    
+    Someone just posted a report that matches your item "{item_name}".
+    
+    New Report Details:
+    --------------------------------
+    Confidence: {match_score}%
+    Contact this person: {current_contact}
+    --------------------------------
+    
+    Please contact them to verify if it is your item.
+    
+    - Lost & Found Team
+    """
+    send_notification(matched_user_email, subject_2, body_2)
