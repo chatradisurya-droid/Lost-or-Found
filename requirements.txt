@@ -3,4 +3,7 @@ pandas
 openai
 rapidfuzz
 deep-translator
+ImageHash
 Pillow
+numpy
+scipy
