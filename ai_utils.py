@@ -1,97 +1,125 @@
+import pandas as pd
 from rapidfuzz import fuzz
-from deep_translator import GoogleTranslator
 import imagehash
 from PIL import Image
 import io
 
-translator = GoogleTranslator(source='auto', target='en')
+# --- 1. SENSITIVITY MASKING ---
+def mask_sensitive_data(text, sensitivity):
+    if sensitivity == "High":
+        return "🔒 [Hidden Content] - Contact Owner to view."
+    return text
 
-def normalize_text(text):
-    if not text: return ""
-    text = text.lower()
-    synonyms = {
-        "mobile": "phone", "cellphone": "phone", "iphone": "phone",
-        "pc": "laptop", "macbook": "laptop",
-        "specs": "glasses", "spectacles": "glasses",
-        "purse": "wallet", "pouch": "wallet",
-        "license": "id", "passport": "id"
-    }
-    words = text.split()
-    return " ".join([synonyms.get(w, w) for w in words])
-
-def generate_ai_description(item_name, location, time_val, r_type):
-    try:
-        item = translator.translate(item_name)
-        loc = translator.translate(location)
-    except:
-        item, loc = item_name, location
-    action = "lost" if r_type == "LOST" else "found"
-    time_str = f" around {time_val}" if time_val else ""
-    return f"Urgent: I {action} a {item} near {loc}{time_str}."
-
-def verify_image_integrity(uploaded_file):
-    if uploaded_file is None: return True
-    try:
-        img = Image.open(uploaded_file)
-        img.verify()
-        return True
-    except: return False
-
+# --- 2. ADVANCED IMAGE HASHING ---
 def get_image_hash(uploaded_file):
-    if uploaded_file is None: return None
+    """
+    Generates a perceptual hash. 
+    Unlike MD5, this allows finding 'similar' images (resized, cropped).
+    """
+    if uploaded_file is None:
+        return None
     try:
+        # Reset file pointer to beginning
         uploaded_file.seek(0)
         img = Image.open(uploaded_file)
-        return str(imagehash.dhash(img))
-    except: return None
+        # Calculate Perceptual Hash
+        phash = imagehash.phash(img)
+        return str(phash)
+    except Exception as e:
+        return None
 
-def check_matches(name, loc, desc, img_hash, r_type, db_df):
-    if db_df.empty: return []
+# --- 3. AUTO-DESCRIPTION ---
+def generate_ai_description(name, loc, time, type):
+    return f"I {type.lower()} a {name} at {loc} around {time}. Please contact me if it belongs to you."
 
-    q_name = normalize_text(name)
-    q_loc = normalize_text(loc)
-    target_type = "FOUND" if r_type == "LOST" else "LOST"
-    target_df = db_df[db_df['report_type'] == target_type]
-    
+# --- 4. SENSITIVITY ANALYSIS ---
+def analyze_sensitivity(desc):
+    sensitive_keywords = ["phone", "aadhaar", "passport", "credit card", "password", "id card"]
+    desc_lower = desc.lower()
+    for word in sensitive_keywords:
+        if word in desc_lower:
+            return "High"
+    return "Normal"
+
+# ==========================================
+# 🧠 CORE MATCHING ENGINE (TEXT + IMAGE)
+# ==========================================
+def check_matches(target_name, target_loc, target_desc, target_img_hash, target_type, all_items_df):
     matches = []
-    
-    for idx, row in target_df.iterrows():
-        db_name = normalize_text(str(row['item_name']))
-        db_loc = normalize_text(str(row['location']))
-        
-        name_score = fuzz.token_set_ratio(q_name, db_name)
-        loc_score = fuzz.token_set_ratio(q_loc, db_loc)
-        
-        img_score = 0
-        if img_hash and row['image_hash']:
-            try:
-                h1 = imagehash.hex_to_hash(img_hash)
-                h2 = imagehash.hex_to_hash(row['image_hash'])
-                if (h1 - h2) <= 15: img_score = 100
-            except: pass
+    if all_items_df.empty: return matches
 
-        final_score = (name_score * 0.5) + (loc_score * 0.2) + (img_score * 0.3)
+    # 1. Look for the opposite type (Found <-> Lost)
+    search_type = "LOST" if target_type == "FOUND" else "FOUND"
+    candidates = all_items_df[all_items_df['report_type'] == search_type]
+
+    # 2. Parse Target Location
+    try:
+        t_parts = target_loc.split(',')
+        t_state = t_parts[-1].strip().lower()
+        t_city = t_parts[-2].strip().lower()
+        t_area = t_parts[-3].strip().lower()
+    except:
+        t_state, t_city, t_area = "", "", ""
+
+    for index, row in candidates.iterrows():
+        score = 0
         
-        if final_score > 60:
+        # --- A. STRICT LOCATION FILTER ---
+        try:
+            c_parts = row['location'].split(',')
+            c_state = c_parts[-1].strip().lower()
+            c_city = c_parts[-2].strip().lower()
+        except:
+            continue # Skip if location format is bad
+
+        # If State or City is different, INSTANT REJECT
+        if t_state and c_state and t_state != c_state: continue
+        if t_city and c_city and t_city != c_city: continue
+            
+        # --- B. TEXT MATCHING (Base Score) ---
+        name_score = fuzz.partial_ratio(target_name.lower(), row['item_name'].lower())
+        desc_score = fuzz.token_sort_ratio(target_desc, row['description'])
+        
+        # Weighted Text Score
+        text_score = (name_score * 0.6) + (desc_score * 0.4)
+        
+        # --- C. IMAGE MATCHING (Bonus Score) ---
+        img_score = 0
+        has_image_match = False
+        
+        if target_img_hash and row['image_hash']:
+            try:
+                # Calculate Hamming Distance between hashes
+                # 0 = Exact Match, < 10 = Very Similar, > 20 = Different
+                h1 = imagehash.hex_to_hash(target_img_hash)
+                h2 = imagehash.hex_to_hash(row['image_hash'])
+                diff = h1 - h2 
+                
+                if diff == 0: img_score = 100
+                elif diff < 10: img_score = 80
+                elif diff < 20: img_score = 50
+                
+                if img_score > 60: has_image_match = True
+            except:
+                pass
+
+        # --- D. FINAL SCORE CALCULATION ---
+        if has_image_match:
+            # If images match, it boosts confidence significantly
+            final_score = (text_score * 0.5) + (img_score * 0.5)
+        else:
+            final_score = text_score
+
+        # --- THRESHOLD ---
+        if final_score > 65:
             matches.append({
                 "id": row['id'],
+                "email": row['email'], # Needed for notification
+                "contact_info": row['contact_info'], # Needed for sharing
                 "item_name": row['item_name'],
+                "description": row['description'],
                 "location": row['location'],
-                "contact_info": row['contact_info'],
-                "email": row['email'], # Get the hidden email for notifications
-                "image_blob": row['image_blob'],
-                "score": int(final_score),
-                "reasons": f"Name: {name_score}%, Loc: {loc_score}%, Img: {img_score}%"
+                "score": int(final_score)
             })
-            
+
     return sorted(matches, key=lambda x: x['score'], reverse=True)
-
-def analyze_sensitivity(text):
-    text = normalize_text(text)
-    if any(x in text for x in ['id', 'credit', 'passport']): return "HIGH"
-    if any(x in text for x in ['phone', 'laptop']): return "MEDIUM"
-    return "LOW"
-
-def mask_sensitive_data(text, sensitivity):
-    if sensitivity == "HIGH": return "🔒 [HIDDEN] Sensitive Doc"
-    return text
