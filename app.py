@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import database as db
 import ai_utils as ai
+import email_utils as notify
 import locations as loc_data
 import time
 from datetime import datetime
@@ -9,20 +10,14 @@ from datetime import datetime
 # 1. SETUP PAGE CONFIG
 st.set_page_config(page_title="Lost and Found", layout="centered")
 
-# 2. NUCLEAR CSS TO HIDE SIDEBAR NAVIGATION
-# This targets multiple hidden IDs to ensure the menu disappears
+# 2. HIDE SIDEBAR NAVIGATION (CSS TRICK)
+# This hides the automatic "App / Admin" menu so regular users don't see it.
 st.markdown("""
 <style>
-    /* Target the specific Navigation container */
     [data-testid="stSidebarNav"] {
         display: none !important;
         visibility: hidden !important;
         height: 0px !important;
-    }
-    
-    /* Target the internal sidebar elements just in case */
-    section[data-testid="stSidebar"] > div > div:nth-child(2) {
-        display: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -48,6 +43,13 @@ def logout():
 # --- LOGIN SCREEN ---
 if not st.session_state.logged_in:
     st.title("🔒 Lost & Found Login")
+    
+    # --- ADMIN LINK ---
+    # A discreet button to access the Admin Portal
+    st.page_link("pages/Admin.py", label="Go to Admin Portal", icon="🔐")
+    st.divider()
+    # ------------------
+
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
     with tab1:
         with st.form("login_form"):
@@ -73,7 +75,6 @@ if not st.session_state.logged_in:
     st.stop()
 
 # --- USER SIDEBAR ---
-# This sidebar will still show up, but only with your custom buttons.
 with st.sidebar:
     current_coins = db.get_user_coins(st.session_state.user_email_login)
     st.write(f"👤 **{st.session_state.username}**")
@@ -187,16 +188,36 @@ elif st.session_state.page == "form":
             st.error("Duplicate post."); st.stop()
         
         img_bytes = img.getvalue() if img else None
+        
+        # --- NEW AI LOGIC ---
         img_hash = ai.get_image_hash(img)
         sens = ai.analyze_sensitivity(desc)
         contact = f"{phone} ({email})"
         
+        # Save the item
         new_id = db.add_item(r_type, name, loc_string, desc, sens, contact, email, img_bytes, img_hash)
         
+        # Check for smart matches
         all_items = db.get_all_active_items()
         matches = ai.check_matches(name, loc_string, desc, img_hash, r_type, all_items)
         
         if matches:
+            # --- EMAIL NOTIFICATION LOGIC ---
+            # If top match is > 80% confident, email both parties automatically
+            top_match = matches[0]
+            if top_match['score'] > 80:
+                with st.spinner("High confidence match found! Sending emails..."):
+                    notify.trigger_match_emails(
+                        current_user_email=email,
+                        matched_user_email=top_match['email'],
+                        item_name=name,
+                        match_score=top_match['score'],
+                        current_contact=contact,
+                        matched_contact=top_match['contact_info']
+                    )
+                st.success("✅ Match found & parties notified via Email!")
+            # -------------------------------
+            
             st.session_state.matches = matches
             st.session_state.match_id = new_id
             st.session_state.page = "matches"
@@ -206,19 +227,24 @@ elif st.session_state.page == "form":
             time.sleep(1); st.session_state.page="home"; st.rerun()
 
 # ==================================================
-# PAGE: MATCHES (If applicable)
+# PAGE: MATCHES
 # ==================================================
 elif st.session_state.page == "matches":
     st.title("🤝 Potential Matches Found!")
-    st.write("We found items that might match your report.")
+    st.write("We found items that match your report based on Name, Location, and Image analysis.")
     
     if "matches" in st.session_state and st.session_state.matches:
         for match in st.session_state.matches:
             with st.container(border=True):
-                st.write(f"**{match['item_name']}**")
-                st.write(match['description'])
-                st.caption(f"Similarity Score: {match['score']}%")
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.markdown(f"**{match['item_name']}**")
+                    st.write(match['description'])
+                    st.caption(f"📍 {match['location']}")
+                with c2:
+                    st.metric(label="Match Confidence", value=f"{match['score']}%")
     
+    st.divider()
     if st.button("Done"):
         st.session_state.page = "home"
         st.rerun()
