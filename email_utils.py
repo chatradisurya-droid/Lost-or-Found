@@ -2,10 +2,11 @@ import smtplib
 from email.mime.text import MIMEText
 import streamlit as st
 
-# SETUP: Get credentials from Streamlit Secrets
-# If running locally without secrets, replace these with actual strings temporarily
+# --- CONFIGURATION ---
 EMAIL_SENDER = "chatradi.surya@gmail.com" 
-EMAIL_PASSWORD = "your-app-password-here" # Google App Password
+# ⚠️ Make sure this password is correct in your code/secrets
+EMAIL_PASSWORD = "your-app-password-here" 
+APP_LINK = "https://lost-and-found-avdmhmp5rkarxa9qy8ucm2.streamlit.app/"
 
 def send_notification(to_email, subject, body):
     try:
@@ -14,7 +15,6 @@ def send_notification(to_email, subject, body):
         msg['From'] = EMAIL_SENDER
         msg['To'] = to_email
 
-        # Connect to Gmail Server
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp_server:
             smtp_server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             smtp_server.sendmail(EMAIL_SENDER, to_email, msg.as_string())
@@ -25,44 +25,50 @@ def send_notification(to_email, subject, body):
 
 def trigger_match_emails(current_user_email, matched_user_email, item_name, match_score, current_contact, matched_contact):
     """
-    Sends two emails:
-    1. To the Current User: "We found a match! Here is their contact."
-    2. To the Matched User: "Someone found your item! Here is their contact."
+    Sends emails to both parties with the Match %, Contact Info, and App Link.
     """
     
-    # Email 1: To the Person who just submitted
-    subject_1 = f"🎯 Match Found: {item_name} ({match_score}% Confidence)"
+    # ---------------------------------------------------------
+    # EMAIL 1: To the person who JUST submitted the post (User B)
+    # ---------------------------------------------------------
+    subject_1 = f"🔥 {match_score}% Match Found for your '{item_name}'!"
     body_1 = f"""
     Hello!
     
-    Good news! We found a post that matches your report for "{item_name}".
+    Great news! We found a post that matches your report for "{item_name}" with {match_score}% confidence.
     
-    Match Details:
-    --------------------------------
-    Confidence: {match_score}%
-    Contact the other person: {matched_contact}
-    --------------------------------
+    --------------------------------------------------
+    THEIR CONTACT INFO:
+    {matched_contact}
+    --------------------------------------------------
     
-    Please verify carefully before exchanging items.
+    👉 Click here to view the item details in the app:
+    {APP_LINK}
+    
+    Please contact them to verify the item.
     
     - Lost & Found Team
     """
     send_notification(current_user_email, subject_1, body_1)
 
-    # Email 2: To the Person from the database (The older post)
-    subject_2 = f"🔔 Update on your {item_name} Report"
+    # ---------------------------------------------------------
+    # EMAIL 2: To the person who posted EARLIER (User A)
+    # ---------------------------------------------------------
+    subject_2 = f"🔔 New {match_score}% Match for your '{item_name}' post"
     body_2 = f"""
     Hello!
     
-    Someone just posted a report that matches your item "{item_name}".
+    A new report was just submitted that matches your older post for "{item_name}" with {match_score}% confidence.
     
-    New Report Details:
-    --------------------------------
-    Confidence: {match_score}%
-    Contact this person: {current_contact}
-    --------------------------------
+    --------------------------------------------------
+    THEIR CONTACT INFO:
+    {current_contact}
+    --------------------------------------------------
     
-    Please contact them to verify if it is your item.
+    👉 Click here to verify the claim in the app:
+    {APP_LINK}
+    
+    Please contact them to arrange the return.
     
     - Lost & Found Team
     """
