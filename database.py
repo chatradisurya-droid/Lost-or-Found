@@ -174,4 +174,13 @@ def delete_user(email):
         c.execute("DELETE FROM items WHERE email=?", (email,)) # Delete their posts too
         conn.commit()
     except: pass
+
     finally: conn.close()
+# Add this to database.py if missing
+def get_admin_all_items():
+    conn = init_db()
+    # Fetch ALL items, ignoring the 'is_active' flag so Admin sees everything
+    query = "SELECT * FROM items ORDER BY timestamp DESC"
+    df = pd.read_sql(query, conn)
+    conn.close()
+    return df
