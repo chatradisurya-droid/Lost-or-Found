@@ -10,7 +10,7 @@ from datetime import datetime
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Lost and Found", layout="centered")
 
-# 2. HIDE DEFAULT SIDEBAR MENU (Keeps your custom sidebar visible)
+# 2. HIDE SIDEBAR NAV (Keep custom buttons)
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] {
@@ -42,7 +42,6 @@ def logout():
 # --- LOGIN SCREEN ---
 if not st.session_state.logged_in:
     st.title("🔒 Lost & Found Login")
-    
     st.page_link("pages/Admin.py", label="Go to Admin Portal", icon="🔐")
     st.divider()
 
@@ -124,7 +123,7 @@ if st.session_state.page == "home":
     else: st.info("No active reports.")
 
 # ==================================================
-# PAGE: MY HISTORY
+# PAGE: HISTORY
 # ==================================================
 elif st.session_state.page == "history":
     st.title("📜 My Activity")
@@ -141,10 +140,10 @@ elif st.session_state.page == "history":
     else: st.info("No history yet.")
 
 # ==================================================
-# PAGE: FORM (Bi-Directional Matching)
+# PAGE: FORM (LOGIC UPGRADE HERE)
 # ==================================================
 elif st.session_state.page == "form":
-    r_type = st.session_state.type # "LOST" or "FOUND"
+    r_type = st.session_state.type
     st.title(f"Report {r_type} Item")
     if st.button("← Back to Feed"): st.session_state.page="home"; st.rerun()
 
@@ -192,25 +191,30 @@ elif st.session_state.page == "form":
         
         img_bytes = img.getvalue() if img else None
         
-        # 1. PROCESS IMAGE & SENSITIVITY
+        # 1. GENERATE HASH & SAVE POST
         img_hash = ai.get_image_hash(img)
         sens = ai.analyze_sensitivity(desc)
         contact = f"{phone} ({email})"
         
-        # 2. SAVE THE REPORT
         new_id = db.add_item(r_type, name, loc_string, desc, sens, contact, email, img_bytes, img_hash)
         
-        # 3. INTELLIGENT MATCHING (Works for both LOST and FOUND)
-        # If I report LOST, it looks for FOUND. If I report FOUND, it looks for LOST.
+        # -----------------------------------------------------------
+        # 🔥 CRITICAL STEP: THE "TIME TRAVEL" CHECK
+        # -----------------------------------------------------------
+        # This function fetches ALL active items from the database.
+        # It includes items posted yesterday, last week, or last month.
         all_items = db.get_all_active_items()
+        
+        # We now check your NEW post against ALL OLD posts.
         matches = ai.check_matches(name, loc_string, desc, img_hash, r_type, all_items)
         
         if matches:
-            # --- EMAIL NOTIFICATION LOGIC ---
+            # --- NOTIFICATION LOGIC ---
             top_match = matches[0]
-            # Send email only if confidence > 80%
+            
             if top_match['score'] > 80:
-                with st.spinner(f"High match found ({top_match['score']}%)! Sending notifications..."):
+                with st.spinner(f"Previous similar post found ({top_match['score']}%)! Connecting you..."):
+                    # This sends emails to both YOU (New Post) and THEM (Old Post)
                     notify.trigger_match_emails(
                         current_user_email=email,
                         matched_user_email=top_match['email'],
@@ -219,8 +223,8 @@ elif st.session_state.page == "form":
                         current_contact=contact,
                         matched_contact=top_match['contact_info']
                     )
-                st.success("✅ Match found! Emails sent to both you and the other person.")
-            # -------------------------------
+                st.success("✅ We found a past post that matches yours! Check your email.")
+            # --------------------------
             
             st.session_state.matches = matches
             st.session_state.match_id = new_id
@@ -234,8 +238,8 @@ elif st.session_state.page == "form":
 # PAGE: MATCHES
 # ==================================================
 elif st.session_state.page == "matches":
-    st.title("🤝 Similar Items Found!")
-    st.markdown("We found items that might be what you are looking for.")
+    st.title("🤝 Matches Found from Database")
+    st.markdown("Here are the past posts that match your report.")
     
     if "matches" in st.session_state and st.session_state.matches:
         for match in st.session_state.matches:
@@ -246,7 +250,6 @@ elif st.session_state.page == "matches":
                     st.write(f"📝 {match['description']}")
                     st.caption(f"📍 {match['location']}")
                 with c2:
-                    # DYNAMIC SCORE COLOR
                     score = match['score']
                     color = "green" if score > 80 else "orange"
                     st.markdown(f"<h2 style='color:{color};'>{score}%</h2>", unsafe_allow_html=True)
