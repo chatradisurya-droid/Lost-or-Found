@@ -2,13 +2,30 @@ import streamlit as st
 import pandas as pd
 import database as db
 import ai_utils as ai
-import email_utils as notify
 import locations as loc_data
 import time
 from datetime import datetime
 
-# UPDATED: Page Config Title
+# 1. SETUP PAGE CONFIG
 st.set_page_config(page_title="Lost and Found", layout="centered")
+
+# 2. NUCLEAR CSS TO HIDE SIDEBAR NAVIGATION
+# This targets multiple hidden IDs to ensure the menu disappears
+st.markdown("""
+<style>
+    /* Target the specific Navigation container */
+    [data-testid="stSidebarNav"] {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0px !important;
+    }
+    
+    /* Target the internal sidebar elements just in case */
+    section[data-testid="stSidebar"] > div > div:nth-child(2) {
+        display: none !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- INIT ---
 if "db_initialized" not in st.session_state:
@@ -28,9 +45,8 @@ def logout():
     st.session_state.page = "home"
     st.rerun()
 
-# --- LOGIN ---
+# --- LOGIN SCREEN ---
 if not st.session_state.logged_in:
-    # UPDATED: Header Title
     st.title("🔒 Lost & Found Login")
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
     with tab1:
@@ -56,7 +72,8 @@ if not st.session_state.logged_in:
                 else: st.error("User exists.")
     st.stop()
 
-# --- SIDEBAR ---
+# --- USER SIDEBAR ---
+# This sidebar will still show up, but only with your custom buttons.
 with st.sidebar:
     current_coins = db.get_user_coins(st.session_state.user_email_login)
     st.write(f"👤 **{st.session_state.username}**")
@@ -70,7 +87,6 @@ with st.sidebar:
 # PAGE: HOME
 # ==================================================
 if st.session_state.page == "home":
-    # UPDATED: Header Title
     st.title("🎓 Lost & Found Feed")
     c1, c2 = st.columns(2)
     if c1.button("📢 Report LOST", use_container_width=True): 
@@ -164,11 +180,9 @@ elif st.session_state.page == "form":
     submitted = st.button(f"🚀 Submit {r_type} Report", type="primary")
 
     if submitted:
-        # --- FIX: Added parentheses and logic to ensure no syntax error ---
         if not (name and loc_string and phone):
             st.error("Please fill Name, Location, and Phone.")
             st.stop()
-            
         if db.check_duplicate_post(email, r_type, name):
             st.error("Duplicate post."); st.stop()
         
@@ -190,3 +204,21 @@ elif st.session_state.page == "form":
         else:
             st.success("Report Saved Successfully!")
             time.sleep(1); st.session_state.page="home"; st.rerun()
+
+# ==================================================
+# PAGE: MATCHES (If applicable)
+# ==================================================
+elif st.session_state.page == "matches":
+    st.title("🤝 Potential Matches Found!")
+    st.write("We found items that might match your report.")
+    
+    if "matches" in st.session_state and st.session_state.matches:
+        for match in st.session_state.matches:
+            with st.container(border=True):
+                st.write(f"**{match['item_name']}**")
+                st.write(match['description'])
+                st.caption(f"Similarity Score: {match['score']}%")
+    
+    if st.button("Done"):
+        st.session_state.page = "home"
+        st.rerun()
