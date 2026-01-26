@@ -4,8 +4,7 @@ import streamlit as st
 
 # --- CONFIGURATION ---
 EMAIL_SENDER = "chatradi.surya@gmail.com" 
-# ⚠️ Make sure this password is correct in your code/secrets
-EMAIL_PASSWORD = "your-app-password-here" 
+EMAIL_PASSWORD = "your-app-password-here"  # ⚠️ Paste your Google App Password
 APP_LINK = "https://lost-and-found-avdmhmp5rkarxa9qy8ucm2.streamlit.app/"
 
 def send_notification(to_email, subject, body):
@@ -25,50 +24,52 @@ def send_notification(to_email, subject, body):
 
 def trigger_match_emails(current_user_email, matched_user_email, item_name, match_score, current_contact, matched_contact):
     """
-    Sends emails to both parties with the Match %, Contact Info, and App Link.
+    Sends two different emails depending on who posted when.
     """
     
     # ---------------------------------------------------------
-    # EMAIL 1: To the person who JUST submitted the post (User B)
+    # EMAIL 1: To YOU (The person who just submitted the post)
+    # This handles the "Found First, Lost Late" scenario.
     # ---------------------------------------------------------
-    subject_1 = f"🔥 {match_score}% Match Found for your '{item_name}'!"
+    subject_1 = f"✅ Match Found! Similar Post Detected ({match_score}%)"
     body_1 = f"""
     Hello!
     
-    Great news! We found a post that matches your report for "{item_name}" with {match_score}% confidence.
+    You just posted about "{item_name}".
+    
+    Our AI checked our database and found a previous post that matches your description!
     
     --------------------------------------------------
     THEIR CONTACT INFO:
     {matched_contact}
     --------------------------------------------------
     
-    👉 Click here to view the item details in the app:
+    👉 Click here to open the app and verify:
     {APP_LINK}
     
-    Please contact them to verify the item.
+    Please contact them immediately.
     
     - Lost & Found Team
     """
     send_notification(current_user_email, subject_1, body_1)
 
     # ---------------------------------------------------------
-    # EMAIL 2: To the person who posted EARLIER (User A)
+    # EMAIL 2: To THEM (The person who posted earlier)
+    # This notifies the old poster that a new match arrived.
     # ---------------------------------------------------------
-    subject_2 = f"🔔 New {match_score}% Match for your '{item_name}' post"
+    subject_2 = f"🔔 Update: Someone just matched your old '{item_name}' post"
     body_2 = f"""
     Hello!
     
-    A new report was just submitted that matches your older post for "{item_name}" with {match_score}% confidence.
+    Good news! Someone just submitted a new report that matches your older post for "{item_name}".
     
     --------------------------------------------------
     THEIR CONTACT INFO:
     {current_contact}
     --------------------------------------------------
     
-    👉 Click here to verify the claim in the app:
+    👉 Click here to open the app and verify:
     {APP_LINK}
-    
-    Please contact them to arrange the return.
     
     - Lost & Found Team
     """
