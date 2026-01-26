@@ -8,22 +8,17 @@ import time
 from datetime import datetime
 
 # 1. SETUP PAGE CONFIG
-# initial_sidebar_state="collapsed" helps keep it closed by default
-st.set_page_config(page_title="Lost and Found", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Lost and Found", layout="centered")
 
-# 2. CSS TO REMOVE SIDEBAR COMPLETELY
-# This hides the sidebar container and the navigation menu
+# 2. HIDE SIDEBAR NAVIGATION (CSS TRICK)
+# This hides the *automatic* "App / Admin" menu so regular users don't see it,
+# but keeps the sidebar itself visible for your custom buttons.
 st.markdown("""
 <style>
-    [data-testid="stSidebar"] {
-        display: none;
-    }
     [data-testid="stSidebarNav"] {
         display: none !important;
-    }
-    /* Add some padding to the top since we are adding a header */
-    .block-container {
-        padding-top: 2rem;
+        visibility: hidden !important;
+        height: 0px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -45,31 +40,6 @@ def logout():
     st.session_state.logged_in = False
     st.session_state.page = "home"
     st.rerun()
-
-# --- TOP NAVIGATION BAR FUNCTION ---
-def render_top_nav():
-    """Renders the header with User Info and Navigation Buttons"""
-    with st.container(border=True):
-        c_user, c_nav1, c_nav2, c_nav3 = st.columns([3, 1, 1, 1])
-        
-        # User Info Column
-        current_coins = db.get_user_coins(st.session_state.user_email_login)
-        with c_user:
-            st.write(f"👤 **{st.session_state.username}**")
-            st.caption(f"🪙 Gold Coins: {current_coins}")
-        
-        # Navigation Buttons
-        with c_nav1:
-            if st.button("🏠 Home", use_container_width=True):
-                st.session_state.page = "home"
-                st.rerun()
-        with c_nav2:
-            if st.button("📜 History", use_container_width=True):
-                st.session_state.page = "history"
-                st.rerun()
-        with c_nav3:
-            if st.button("🚪 Logout", use_container_width=True): 
-                logout()
 
 # --- LOGIN SCREEN ---
 if not st.session_state.logged_in:
@@ -104,12 +74,27 @@ if not st.session_state.logged_in:
                 else: st.error("User exists.")
     st.stop()
 
+# --- USER SIDEBAR (RESTORED) ---
+with st.sidebar:
+    current_coins = db.get_user_coins(st.session_state.user_email_login)
+    st.write(f"👤 **{st.session_state.username}**")
+    st.metric(label="🪙 Your Gold Coins", value=current_coins)
+    
+    st.divider()
+    if st.button("🏠 Home Feed", use_container_width=True): 
+        st.session_state.page="home"
+        st.rerun()
+    if st.button("📜 My History", use_container_width=True): 
+        st.session_state.page="history"
+        st.rerun()
+    st.divider()
+    if st.button("🚪 Logout", use_container_width=True): 
+        logout()
+
 # ==================================================
 # PAGE: HOME
 # ==================================================
 if st.session_state.page == "home":
-    render_top_nav() # <--- Top Bar
-    
     st.title("🎓 Lost & Found Feed")
     c1, c2 = st.columns(2)
     if c1.button("📢 Report LOST", use_container_width=True): 
@@ -146,8 +131,6 @@ if st.session_state.page == "home":
 # PAGE: MY HISTORY
 # ==================================================
 elif st.session_state.page == "history":
-    render_top_nav() # <--- Top Bar
-    
     st.title("📜 My Activity")
     df_hist = db.get_user_history(st.session_state.user_email_login)
     if not df_hist.empty:
@@ -165,8 +148,6 @@ elif st.session_state.page == "history":
 # PAGE: FORM
 # ==================================================
 elif st.session_state.page == "form":
-    render_top_nav() # <--- Top Bar
-    
     r_type = st.session_state.type
     st.title(f"Report {r_type} Item")
     if st.button("← Back to Feed"): st.session_state.page="home"; st.rerun()
@@ -222,4 +203,51 @@ elif st.session_state.page == "form":
         
         new_id = db.add_item(r_type, name, loc_string, desc, sens, contact, email, img_bytes, img_hash)
         
-        all_items = db
+        all_items = db.get_all_active_items()
+        matches = ai.check_matches(name, loc_string, desc, img_hash, r_type, all_items)
+        
+        if matches:
+            # --- EMAIL NOTIFICATION LOGIC ---
+            top_match = matches[0]
+            if top_match['score'] > 80:
+                with st.spinner("High confidence match found! Sending emails..."):
+                    notify.trigger_match_emails(
+                        current_user_email=email,
+                        matched_user_email=top_match['email'],
+                        item_name=name,
+                        match_score=top_match['score'],
+                        current_contact=contact,
+                        matched_contact=top_match['contact_info']
+                    )
+                st.success("✅ Match found & parties notified via Email!")
+            
+            st.session_state.matches = matches
+            st.session_state.match_id = new_id
+            st.session_state.page = "matches"
+            st.rerun()
+        else:
+            st.success("Report Saved Successfully!")
+            time.sleep(1); st.session_state.page="home"; st.rerun()
+
+# ==================================================
+# PAGE: MATCHES
+# ==================================================
+elif st.session_state.page == "matches":
+    st.title("🤝 Potential Matches Found!")
+    st.write("We found items that match your report.")
+    
+    if "matches" in st.session_state and st.session_state.matches:
+        for match in st.session_state.matches:
+            with st.container(border=True):
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.markdown(f"**{match['item_name']}**")
+                    st.write(match['description'])
+                    st.caption(f"📍 {match['location']}")
+                with c2:
+                    st.metric(label="Match Confidence", value=f"{match['score']}%")
+    
+    st.divider()
+    if st.button("Done"):
+        st.session_state.page = "home"
+        st.rerun()
