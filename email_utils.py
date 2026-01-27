@@ -4,8 +4,8 @@ from email.mime.multipart import MIMEMultipart
 
 # --- CONFIGURATION ---
 SENDER_EMAIL = "chatradi.surya@gmail.com"
-SENDER_PASSWORD = "vkhl nnzd uhcx bpft" # <--- UPDATE THIS
-APP_LINK = "https://lost-and-found-avdmhmp5rkarxa9qy8ucm2.streamlit.app/"
+SENDER_PASSWORD = "YOUR_16_DIGIT_APP_PASSWORD_HERE" # <--- UPDATE THIS
+APP_BASE_URL = "https://lost-and-found-avdmhmp5rkarxa9qy8ucm2.streamlit.app/"
 
 def send_email_core(to_email, subject, body):
     try:
@@ -15,24 +15,53 @@ def send_email_core(to_email, subject, body):
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
 
-        # Standard Gmail SSL Port 465
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
         server.quit()
-        print(f"✅ Email sent to {to_email}")
         return True
     except Exception as e:
-        print(f"❌ EMAIL ERROR: {e}")
+        print(f"Email Error: {e}")
         return False
 
-def trigger_match_emails(current_user_email, matched_user_email, item_name, match_score, current_contact, matched_contact):
-    # Email to ME (New Poster)
-    subj_1 = f"🔥 {match_score}% Match Found for '{item_name}'"
-    body_1 = f"We found a match!\n\nTHEIR CONTACT: {matched_contact}\n\nCheck App: {APP_LINK}"
-    send_email_core(current_user_email, subj_1, body_1)
+def send_verification_link(user_email, match_id, item_name, match_score):
+    """STEP 1: Send the LINK to verify the item (No contact info yet)"""
+    
+    link = f"{APP_BASE_URL}?match_id={match_id}"
+    
+    subject = f"🔥 {match_score}% Match Found for '{item_name}'"
+    body = f"""
+    Hello!
+    
+    We found a post that matches your item "{item_name}" with {match_score}% confidence.
+    
+    Please click the link below to VIEW the item and confirm if it is yours.
+    
+    👉 CLICK TO VERIFY:
+    {link}
+    
+    (If you confirm it is yours, we will share the contact details).
+    
+    - Lost & Found Team
+    """
+    send_email_core(user_email, subject, body)
 
-    # Email to THEM (Old Poster)
-    subj_2 = f"🔔 New Match for your old '{item_name}' post"
-    body_2 = f"A new item matches your old post!\n\nTHEIR CONTACT: {current_contact}\n\nCheck App: {APP_LINK}"
-    send_email_core(matched_user_email, subj_2, body_2)
+def send_contact_share_email(recipient_email, matched_item_name, contact_info):
+    """STEP 2: Send the CONTACT INFO after they clicked 'Yes'"""
+    
+    subject = f"📞 Contact Details for '{matched_item_name}'"
+    body = f"""
+    Hello!
+    
+    Since you confirmed the match for "{matched_item_name}", here are the contact details of the other person:
+    
+    --------------------------------------------------
+    📞 CONTACT INFO:
+    {contact_info}
+    --------------------------------------------------
+    
+    Please contact them to arrange the exchange.
+    
+    - Lost & Found Team
+    """
+    send_email_core(recipient_email, subject, body)
