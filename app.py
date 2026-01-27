@@ -102,7 +102,7 @@ elif st.session_state.page == "history":
     if not df.empty: st.dataframe(df[["item_name", "location", "status"]])
     else: st.info("No history yet.")
 
-# --- FORM ---
+# --- FORM (WITH AUTO DESC) ---
 elif st.session_state.page == "form":
     r_type = st.session_state.type
     st.title(f"Report {r_type} Item")
@@ -111,7 +111,7 @@ elif st.session_state.page == "form":
     c1, c2 = st.columns(2)
     with c1: 
         name = st.text_input("Item Name (e.g., Blue Wallet)")
-        # Location logic...
+        # Location Selection
         states = list(loc_data.INDIA_LOCATIONS.keys())
         state = st.selectbox("State", states)
         cities = list(loc_data.INDIA_LOCATIONS[state].keys())
@@ -125,7 +125,19 @@ elif st.session_state.page == "form":
         email = st.text_input("Email", value=st.session_state.user_email_login, disabled=True)
         phone = st.text_input("Phone Number")
     
-    desc = st.text_area("Description")
+    time_val = st.text_input("Approx Time (e.g., 2 PM)")
+    
+    # --- AUTO DESC BUTTON ---
+    if "gen_desc" not in st.session_state: st.session_state.gen_desc = ""
+    
+    if st.button("✨ Auto-Generate Description"):
+        if name and loc_string:
+            st.session_state.gen_desc = ai.generate_ai_description(name, loc_string, time_val, r_type)
+            st.rerun()
+        else:
+            st.warning("⚠️ Please fill in 'Item Name' and 'Location' first!")
+
+    desc = st.text_area("Description", value=st.session_state.gen_desc)
     img = st.file_uploader("Image", ["jpg","png"])
     submitted = st.button(f"🚀 Submit {r_type} Report", type="primary")
 
@@ -139,7 +151,7 @@ elif st.session_state.page == "form":
         # 1. SAVE POST
         new_id = db.add_item(r_type, name, loc_string, desc, "Normal", contact, email, img_bytes, img_hash)
         
-        # 2. CHECK MATCHES (Past & Present)
+        # 2. CHECK MATCHES
         all_items = db.get_all_active_items()
         matches = ai.check_matches(name, loc_string, desc, img_hash, r_type, all_items)
         
