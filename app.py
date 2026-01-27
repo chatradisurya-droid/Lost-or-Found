@@ -10,7 +10,7 @@ from datetime import datetime
 # 1. SETUP
 st.set_page_config(page_title="Lost and Found", layout="centered")
 
-# 2. HIDE SIDEBAR NAV (Keep custom buttons)
+# 2. HIDE SIDEBAR NAV
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] { display: none !important; }
@@ -25,6 +25,12 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "page" not in st.session_state:
     st.session_state.page = "home"
+
+# --- DEEP LINK CHECKER (NEW) ---
+# This checks if the user clicked an email link (e.g. ?match_id=5)
+if "match_id" in st.query_params:
+    st.session_state.page = "verify_match"
+    st.session_state.deep_link_id = st.query_params["match_id"]
 
 def format_date(ts):
     try: return datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S").strftime("%b %d, %Y")
@@ -67,7 +73,6 @@ if not st.session_state.logged_in:
 
 # --- SIDEBAR ---
 with st.sidebar:
-    # Refresh coins
     current_coins = db.get_user_coins(st.session_state.user_email_login)
     st.write(f"👤 **{st.session_state.username}**")
     st.metric(label="🪙 Your Gold Coins", value=current_coins)
@@ -81,14 +86,61 @@ with st.sidebar:
     if st.button("🚪 Logout", use_container_width=True): 
         logout()
 
-# --- HOME ---
-if st.session_state.page == "home":
+# ==========================================
+# PAGE: DEEP LINK VERIFICATION (NEW)
+# ==========================================
+if st.session_state.page == "verify_match":
+    st.title("🔍 Verify Match")
+    
+    # Get the item details from the ID in the link
+    match_id = st.session_state.deep_link_id
+    # We need a function to get one item (I'll add this to database code below)
+    conn = db.init_db_connection()
+    item = pd.read_sql(f"SELECT * FROM items WHERE id = {match_id}", conn)
+    conn.close()
+    
+    if not item.empty:
+        row = item.iloc[0]
+        st.info("You clicked a link from your email. Is this the item?")
+        
+        with st.container(border=True):
+            st.image(row['image_blob'], width=200) if row['image_blob'] else None
+            st.markdown(f"### {row['item_name']}")
+            st.write(f"**Description:** {row['description']}")
+            st.write(f"**Location:** {row['location']}")
+            
+            st.divider()
+            
+            # CONFIRMATION BUTTONS
+            c1, c2 = st.columns(2)
+            if c1.button("✅ Yes, This is it!", type="primary"):
+                # NOW we share the contact details
+                notify.send_contact_share_email(
+                    recipient_email=st.session_state.user_email_login, 
+                    matched_item_name=row['item_name'], 
+                    contact_info=row['contact_info']
+                )
+                st.balloons()
+                st.success("🎉 Contact Details have been sent to your Email!")
+                
+            if c2.button("❌ No, Not mine"):
+                st.warning("Okay, we will keep looking.")
+                time.sleep(2)
+                st.session_state.page = "home"
+                st.rerun()
+    else:
+        st.error("Item not found or deleted.")
+        if st.button("Go Home"): st.session_state.page="home"; st.rerun()
+
+# ==========================================
+# PAGE: HOME
+# ==========================================
+elif st.session_state.page == "home":
     st.title("🎓 Lost & Found Feed")
     c1, c2 = st.columns(2)
-    # Give these buttons unique keys just in case
-    if c1.button("📢 Report LOST", key="btn_lost_home", use_container_width=True): 
+    if c1.button("📢 Report LOST", key="h_lost", use_container_width=True): 
         st.session_state.type = "LOST"; st.session_state.page = "form"; st.rerun()
-    if c2.button("🔍 Report FOUND", key="btn_found_home", use_container_width=True): 
+    if c2.button("🔍 Report FOUND", key="h_found", use_container_width=True): 
         st.session_state.type = "FOUND"; st.session_state.page = "form"; st.rerun()
     
     st.divider()
@@ -105,14 +157,18 @@ if st.session_state.page == "home":
                 else: st.success("FOUND")
     else: st.info("No active reports.")
 
-# --- HISTORY ---
+# ==========================================
+# PAGE: HISTORY
+# ==========================================
 elif st.session_state.page == "history":
     st.title("📜 My Activity")
     df = db.get_user_history(st.session_state.user_email_login)
     if not df.empty: st.dataframe(df[["item_name", "location", "status"]])
     else: st.info("No history yet.")
 
-# --- FORM ---
+# ==========================================
+# PAGE: FORM (Reporting & Matching)
+# ==========================================
 elif st.session_state.page == "form":
     r_type = st.session_state.type
     st.title(f"Report {r_type} Item")
@@ -137,6 +193,7 @@ elif st.session_state.page == "form":
     
     time_val = st.text_input("Approx Time (e.g., 2 PM)")
     
+    # Auto-Desc
     if "gen_desc" not in st.session_state: st.session_state.gen_desc = ""
     if st.button("✨ Auto-Generate Description"):
         if name and loc_string:
@@ -155,43 +212,41 @@ elif st.session_state.page == "form":
         img_hash = ai.get_image_hash(img)
         contact = f"{phone} ({email})"
         
-        # 1. SAVE POST & REWARD COINS
+        # 1. SAVE POST
         new_id = db.add_item(r_type, name, loc_string, desc, "Normal", contact, email, img_bytes, img_hash)
-        st.toast("✅ Report Saved! +10 Coins added!")
+        st.toast("✅ Saved! Checking for matches...")
         
-        # 2. IMMEDIATE AI CHECK (Past & Present)
-        with st.spinner("🤖 AI is scanning for matches..."):
-            all_items = db.get_all_active_items()
-            # Perform the match check
-            matches = ai.check_matches(name, loc_string, desc, img_hash, r_type, all_items)
+        # 2. CHECK MATCHES
+        all_items = db.get_all_active_items()
+        matches = ai.check_matches(name, loc_string, desc, img_hash, r_type, all_items)
+        
+        if matches:
+            st.session_state.matches = matches
             
-            if matches:
-                # Store matches and switch page
-                st.session_state.matches = matches
-                
-                # Check for Email Trigger (>80%)
-                top_match = matches[0]
-                if top_match['score'] > 80:
-                    st.info(f"🔥 High Match ({top_match['score']}%) Found! Sending emails...")
-                    notify.trigger_match_emails(
-                        current_user_email=email,
-                        matched_user_email=top_match['email'],
+            # --- NOTIFICATION LOGIC (90% Threshold) ---
+            top_match = matches[0]
+            if top_match['score'] > 90:
+                with st.spinner("🔥 High match found! Sending verification link..."):
+                    # Send Email with LINK ONLY (No contact info yet)
+                    notify.send_verification_link(
+                        user_email=email,
+                        match_id=top_match['id'],
                         item_name=name,
-                        match_score=top_match['score'],
-                        current_contact=contact,
-                        matched_contact=top_match['contact_info']
+                        match_score=top_match['score']
                     )
-                
-                st.session_state.page = "matches"
-                st.rerun()
-            else:
-                st.success("Report Saved! No immediate matches found.")
-                time.sleep(2); st.session_state.page="home"; st.rerun()
+                st.success("✅ High Match! We sent a verification link to your email.")
+            
+            st.session_state.page = "matches"
+            st.rerun()
+        else:
+            st.success("Report Saved! We will notify you if a match appears later.")
+            time.sleep(2); st.session_state.page="home"; st.rerun()
 
-# --- MATCHES DISPLAY PAGE ---
+# ==========================================
+# PAGE: MATCHES DISPLAY
+# ==========================================
 elif st.session_state.page == "matches":
-    st.title("🤝 Similar Posts Found")
-    st.success("We found these posts that match your description:")
+    st.title("🤝 Matches Found")
     
     if "matches" in st.session_state:
         for match in st.session_state.matches:
@@ -201,14 +256,10 @@ elif st.session_state.page == "matches":
                     st.subheader(f"{match['item_name']}")
                     st.write(f"📍 {match['location']}")
                     st.write(f"📝 {match['description']}")
-                    st.info(f"📞 Contact: {match['contact_info']}")
                 with c2:
                     score = match['score']
-                    color = "green" if score > 80 else "orange"
-                    st.markdown(f"<h1 style='color:{color}; text-align: center;'>{score}%</h1>", unsafe_allow_html=True)
-                    st.caption("Match Confidence")
+                    color = "green" if score > 90 else "orange"
+                    st.markdown(f"<h1 style='color:{color};'>{score}%</h1>", unsafe_allow_html=True)
+                    st.caption("Match Score")
                     
-    st.divider()
-    if st.button("Done"): 
-        st.session_state.page="home"
-        st.rerun()
+    if st.button("Done"): st.session_state.page="home"; st.rerun()
