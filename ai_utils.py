@@ -29,9 +29,16 @@ def normalize_text(text):
 # --- 2. AUTO-DESCRIPTION ---
 def generate_ai_description(name, loc, time, type):
     action = "lost" if type == "LOST" else "found"
-    return f"Urgent: I {action} a {name} at {loc}. Please contact me."
+    time_str = f" around {time}" if time else ""
+    return f"Urgent: I {action} a {name} at {loc}{time_str}. Please contact me."
 
-# --- 3. IMAGE HASHING ---
+# --- 3. SENSITIVITY MASKING (THIS WAS MISSING!) ---
+def mask_sensitive_data(text, sensitivity):
+    if sensitivity == "High":
+        return "🔒 [Hidden Content] - Contact Owner to view."
+    return text
+
+# --- 4. IMAGE HASHING ---
 def get_image_hash(uploaded_file):
     if uploaded_file is None: return None
     try:
@@ -41,7 +48,7 @@ def get_image_hash(uploaded_file):
         return str(imagehash.average_hash(img))
     except: return None
 
-# --- 4. SENSITIVITY ---
+# --- 5. SENSITIVITY ANALYSIS ---
 def analyze_sensitivity(desc):
     keywords = ["aadhaar", "passport", "pan card", "credit card", "debit card", "password", "pin"]
     return "High" if any(k in desc.lower() for k in keywords) else "Normal"
@@ -58,7 +65,6 @@ def check_matches(target_name, target_loc, target_desc, target_img_hash, target_
     candidates = all_items_df[all_items_df['report_type'] == search_type]
 
     # 2. Normalize My Input
-    # "Dark Black Wallet" becomes "dark black wallet"
     my_name_clean = normalize_text(target_name) 
     my_desc_clean = normalize_text(target_desc)
     
@@ -82,10 +88,9 @@ def check_matches(target_name, target_loc, target_desc, target_img_hash, target_
         db_desc_clean = normalize_text(row['description'])
 
         # Logic: "token_set_ratio" handles "Black Wallet" vs "Dark Black Wallet"
-        # It detects that "Black Wallet" is INSIDE "Dark Black Wallet" and gives 100%
         name_score = fuzz.token_set_ratio(my_name_clean, db_name_clean)
         
-        # Cross Check: Compare Name vs Description (in case user put details in desc)
+        # Cross Check: Compare Name vs Description
         cross_score = fuzz.token_set_ratio(my_name_clean, db_desc_clean)
         
         # Take the higher of the two text scores
@@ -110,7 +115,6 @@ def check_matches(target_name, target_loc, target_desc, target_img_hash, target_
             score = (text_score * 0.4) + (img_score * 0.6)
 
         # --- FINAL THRESHOLD ---
-        # If score is high enough (>80), we count it as a match
         if score > 80:
             matches.append({
                 "id": row['id'],
@@ -122,5 +126,4 @@ def check_matches(target_name, target_loc, target_desc, target_img_hash, target_
                 "score": int(score)
             })
 
-    # Return matches sorted by highest score
     return sorted(matches, key=lambda x: x['score'], reverse=True)
