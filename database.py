@@ -1,7 +1,7 @@
 import sqlite3
 import pandas as pd
 
-DB_NAME = "campus_lost_found.db"
+DB_NAME = "campus_lost_found_v3.db"
 
 def init_db_connection():
     """Helper for app.py to get raw connection"""
@@ -81,3 +81,4 @@ def check_duplicate_post(email, r_type, name):
     c.execute("SELECT id FROM items WHERE email=? AND report_type=? AND item_name=? AND is_active=1", (email, r_type, name))
     found = c.fetchone(); conn.close()
     return found is not None
+
