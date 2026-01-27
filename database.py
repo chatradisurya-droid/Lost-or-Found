@@ -1,7 +1,7 @@
 import sqlite3
 import pandas as pd
 
-DB_NAME = "campus_lost_found.db"
+DB_NAME = "campus_lost_found_v2.db"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -132,3 +132,4 @@ def delete_user(email):
     c.execute("DELETE FROM items WHERE email = ?", (email,))
     conn.commit()
     conn.close()
+
