@@ -171,26 +171,26 @@ elif st.session_state.page == "form":
         st.toast("✅ Saved!")
 
         # 2. RUN AI MATCHING
+        # ... inside if submitted: ...
+
+        # 2. MATCHING LOGIC
         st.divider()
         st.subheader("🔎 Analyzing Database for Matches...")
         
-        # Fetch all previous items
         all_items = db.get_all_active_items()
-        
-        # New "Smarter" Check
         matches = ai.check_matches(name, loc_string, desc, img_hash, r_type, all_items)
         
         if matches:
             top_match = matches[0]
             st.success(f"We found {len(matches)} similar items!")
             
-            # Send Email if score > 80%
+            # NOTIFICATION (Threshold > 80%)
             if top_match['score'] > 80:
                 st.info(f"🔥 High Match ({top_match['score']}%)! Sending verification emails...")
                 notify.send_verification_link(email, top_match['id'], name, top_match['score'])
                 notify.send_verification_link(top_match['email'], top_match['id'], name, top_match['score'])
             
-            # Display Matches Below Button
+            # Display Matches
             for match in matches:
                 with st.container(border=True):
                     c_a, c_b = st.columns([4, 1])
@@ -207,3 +207,4 @@ elif st.session_state.page == "form":
             time.sleep(4)
             st.session_state.page = "home"
             st.rerun()
+
