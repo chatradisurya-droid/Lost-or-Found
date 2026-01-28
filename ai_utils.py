@@ -6,116 +6,94 @@ import io
 # --- 1. SMART TEXT NORMALIZER ---
 def normalize_text(text):
     """
-    Converts text to lowercase and swaps synonyms.
-    Ex: "I lost my Cellphone" -> "i lost my phone"
+    Cleans text to make matching easier.
+    Ex: "Dark Black Wallet" -> "dark black wallet"
     """
     if not text: return ""
-    text = text.lower().strip()
-    
-    # Synonyms Dictionary
-    synonyms = {
-        "mobile": "phone", "cellphone": "phone", "iphone": "phone", "android": "phone",
-        "purse": "wallet", "pouch": "wallet", "billfold": "wallet",
-        "specs": "glasses", "goggles": "glasses", "spectacles": "glasses",
-        "macbook": "laptop", "pc": "laptop", "notebook": "laptop",
-        "scooty": "bike", "scooter": "bike", "motorcycle": "bike"
-    }
-    
-    words = text.split()
-    # Replace words with their common synonym
-    fixed_words = [synonyms.get(w, w) for w in words]
-    return " ".join(fixed_words)
+    return text.lower().strip()
 
-# --- 2. AUTO-DESCRIPTION ---
+# --- 2. GENERATE DESCRIPTION ---
 def generate_ai_description(name, loc, time, type):
     action = "lost" if type == "LOST" else "found"
     time_str = f" around {time}" if time else ""
     return f"Urgent: I {action} a {name} at {loc}{time_str}. Please contact me."
 
-# --- 3. SENSITIVITY MASKING (THIS WAS MISSING!) ---
-def mask_sensitive_data(text, sensitivity):
-    if sensitivity == "High":
-        return "🔒 [Hidden Content] - Contact Owner to view."
-    return text
-
-# --- 4. IMAGE HASHING ---
+# --- 3. IMAGE HASHING ---
 def get_image_hash(uploaded_file):
     if uploaded_file is None: return None
     try:
         uploaded_file.seek(0)
         img = Image.open(uploaded_file)
-        # 8x8 average hash is good for finding identical/near-identical images
+        # Average hash is best for similar-looking objects
         return str(imagehash.average_hash(img))
     except: return None
 
-# --- 5. SENSITIVITY ANALYSIS ---
+# --- 4. SENSITIVITY ---
+def mask_sensitive_data(text, sensitivity):
+    if sensitivity == "High": return "🔒 [Hidden Content]"
+    return text
+
 def analyze_sensitivity(desc):
-    keywords = ["aadhaar", "passport", "pan card", "credit card", "debit card", "password", "pin"]
+    keywords = ["aadhaar", "passport", "pan", "card", "password"]
     return "High" if any(k in desc.lower() for k in keywords) else "Normal"
 
 # ==========================================
-# 🧠 THE SMART MATCHING ENGINE
+# 🧠 SMART MATCHING LOGIC
 # ==========================================
 def check_matches(target_name, target_loc, target_desc, target_img_hash, target_type, all_items_df):
     matches = []
     if all_items_df.empty: return matches
 
-    # 1. Search Opposite Type (Lost <-> Found)
-    search_type = "LOST" if target_type == "FOUND" else "FOUND"
+    # 1. SWAP LOGIC: If I reported LOST, look for FOUND (and vice versa)
+    search_type = "FOUND" if target_type == "LOST" else "LOST"
+    
+    # 2. Filter Database
     candidates = all_items_df[all_items_df['report_type'] == search_type]
 
-    # 2. Normalize My Input
-    my_name_clean = normalize_text(target_name) 
-    my_desc_clean = normalize_text(target_desc)
-    
-    # Parse my location (City is crucial)
-    try:
-        my_city = target_loc.split(',')[-2].strip().lower() # Assuming "Area, City, State"
-    except:
-        my_city = ""
+    # 3. Clean Inputs
+    my_name = normalize_text(target_name)
+    my_city = target_loc.split(',')[-2].strip().lower() if ',' in target_loc else ""
 
     for index, row in candidates.iterrows():
         score = 0
         
-        # --- A. SMART LOCATION FILTER ---
-        # Instead of exact match, check if City exists in the string
+        # --- A. LOCATION CHECK ---
+        # If the City is totally different, skip it.
         db_loc = row['location'].lower()
         if my_city and my_city not in db_loc:
-            continue # Skip if cities are completely different
+            continue 
 
-        # --- B. SMART TEXT MATCHING ---
-        db_name_clean = normalize_text(row['item_name'])
-        db_desc_clean = normalize_text(row['description'])
+        # --- B. TEXT MATCHING (The "Dark Black Wallet" Fix) ---
+        db_name = normalize_text(row['item_name'])
+        
+        # token_set_ratio is perfect here. 
+        # It matches "Black Wallet" inside "Dark Black Wallet" as 100% match.
+        name_score = fuzz.token_set_ratio(my_name, db_name)
+        
+        # Description check
+        desc_score = fuzz.token_set_ratio(my_name, normalize_text(row['description']))
+        
+        # Use the best text score
+        final_text_score = max(name_score, desc_score)
+        
+        score += (final_text_score * 0.7) # Text is 70% of score
 
-        # Logic: "token_set_ratio" handles "Black Wallet" vs "Dark Black Wallet"
-        name_score = fuzz.token_set_ratio(my_name_clean, db_name_clean)
-        
-        # Cross Check: Compare Name vs Description
-        cross_score = fuzz.token_set_ratio(my_name_clean, db_desc_clean)
-        
-        # Take the higher of the two text scores
-        text_score = max(name_score, cross_score)
-        
-        score += (text_score * 0.7) # Text is 70% of the weight
-
-        # --- C. IMAGE MATCHING ---
+        # --- C. IMAGE CHECK ---
         img_score = 0
         if target_img_hash and row['image_hash']:
             try:
                 h1 = imagehash.hex_to_hash(target_img_hash)
                 h2 = imagehash.hex_to_hash(row['image_hash'])
-                # Difference of 0-5 bits is a very strong match
-                if (h1 - h2) <= 5: img_score = 100
-                elif (h1 - h2) <= 10: img_score = 80
-                elif (h1 - h2) <= 15: img_score = 50
+                if (h1 - h2) <= 5: img_score = 100  # Identical image
+                elif (h1 - h2) <= 15: img_score = 80 # Similar image
             except: pass
         
-        # If Image matches, it boosts the score significantly
         if img_score > 0:
-            score = (text_score * 0.4) + (img_score * 0.6)
+            # If image matches, recalculate score with image weight
+            score = (final_text_score * 0.4) + (img_score * 0.6)
 
         # --- FINAL THRESHOLD ---
-        if score > 80:
+        if score > 75: # Any match above 75% is worth showing
             matches.append({
                 "id": row['id'],
                 "email": row['email'],
@@ -126,4 +104,5 @@ def check_matches(target_name, target_loc, target_desc, target_img_hash, target_
                 "score": int(score)
             })
 
+    # Sort: Highest match first
     return sorted(matches, key=lambda x: x['score'], reverse=True)
