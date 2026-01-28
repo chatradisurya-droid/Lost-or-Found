@@ -5,47 +5,26 @@ import io
 
 # --- 1. CLEAN TEXT ---
 def normalize_text(text):
-    """
-    Standardizes text.
-    "Dark Black Wallet" -> "dark black wallet"
-    "Mobile Phone" -> "phone"
-    """
     if not text: return ""
-    text = text.lower().strip()
+    # Remove punctuation for better matching (a.p. vs ap)
+    text = text.lower().replace(".", "").replace(",", " ").strip()
     
-    # Synonyms mapping
     synonyms = {
         "mobile": "phone", "cellphone": "phone", "iphone": "phone",
         "purse": "wallet", "pouch": "wallet", "moneybag": "wallet",
-        "bag": "backpack", "laptop": "computer", "macbook": "computer"
+        "bag": "backpack", "laptop": "computer"
     }
-    
     words = text.split()
     fixed_words = [synonyms.get(w, w) for w in words]
     return " ".join(fixed_words)
 
-# --- 2. LOCATION MATCHER (FIXED) ---
-def check_location_match(loc1, loc2):
-    """
-    Checks if locations match even if written differently.
-    Ex: "Benz Circle" matches "Benz Circle, Vijayawada"
-    """
-    l1 = normalize_text(loc1)
-    l2 = normalize_text(loc2)
-    
-    # 1. Fuzzy Token Match (Handles "Benz Circle" inside "Benz Circle, Vja")
-    ratio = fuzz.token_set_ratio(l1, l2)
-    
-    # If match is > 70%, we consider it the same place
-    return ratio > 70
-
-# --- 3. AUTO DESCRIPTION ---
+# --- 2. GENERATE DESCRIPTION ---
 def generate_ai_description(name, loc, time, type):
     action = "lost" if type == "LOST" else "found"
     t_str = f" around {time}" if time else ""
     return f"Urgent: I {action} a {name} at {loc}{t_str}. Please contact me."
 
-# --- 4. IMAGE HASH ---
+# --- 3. IMAGE HASH ---
 def get_image_hash(uploaded_file):
     if uploaded_file is None: return None
     try:
@@ -54,69 +33,69 @@ def get_image_hash(uploaded_file):
         return str(imagehash.average_hash(img))
     except: return None
 
-# --- 5. SENSITIVITY ---
+# --- 4. SENSITIVITY ---
 def analyze_sensitivity(desc):
     keywords = ["aadhaar", "pan", "passport", "credit", "debit", "pin"]
     return "High" if any(k in desc.lower() for k in keywords) else "Normal"
-    
+
 def mask_sensitive_data(text, sens):
     return "🔒 [Hidden]" if sens == "High" else text
 
 # ==========================================
-# 🧠 CORE MATCHING ENGINE
+# 🧠 ROBUST MATCHING ENGINE (WEIGHTED)
 # ==========================================
 def check_matches(target_name, target_loc, target_desc, target_img_hash, target_type, all_items_df):
     matches = []
     if all_items_df.empty: return matches
 
     # 1. Look for OPPOSITE type
-    # If I am LOST, look for FOUND. If I am FOUND, look for LOST.
     search_type = "FOUND" if target_type == "LOST" else "LOST"
     candidates = all_items_df[all_items_df['report_type'] == search_type]
 
-    # 2. My Data
+    # 2. Normalize Inputs
     my_name = normalize_text(target_name)
-    
-    for index, row in candidates.iterrows():
-        score = 0
-        
-        # --- STEP A: LOCATION CHECK ---
-        # If locations are totally different, skip immediately
-        if not check_location_match(target_loc, row['location']):
-            continue 
+    my_loc = normalize_text(target_loc)
+    my_desc = normalize_text(target_desc)
 
-        # --- STEP B: NAME MATCHING ("Dark Black Wallet" vs "Black Wallet") ---
+    for index, row in candidates.iterrows():
+        # Normalize DB Data
         db_name = normalize_text(row['item_name'])
+        db_loc = normalize_text(row['location'])
+        db_desc = normalize_text(row['description'])
         
-        # token_set_ratio handles subsets. 
-        # "black wallet" is a subset of "dark black wallet" -> Score 100
+        # --- SCORING WEIGHTS ---
+        
+        # A. NAME (60%) - Uses token_set_ratio (Handles "Black Wallet" inside "Dark Black Wallet")
         name_score = fuzz.token_set_ratio(my_name, db_name)
         
-        # Description check (backup)
-        desc_score = fuzz.token_set_ratio(my_name, normalize_text(row['description']))
+        # B. LOCATION (20%) - Uses token_set_ratio (Handles "Benz Circle" inside "Benz Circle, Vijayawada")
+        # Even if "enz circle", score will be decent (e.g. 80-90)
+        loc_score = fuzz.token_set_ratio(my_loc, db_loc)
         
-        # Take best text score
-        final_text_score = max(name_score, desc_score)
+        # C. DESCRIPTION (10%)
+        desc_score = fuzz.token_set_ratio(my_desc, db_desc)
         
-        # Weight: Text is 70% of the match
-        score += (final_text_score * 0.7)
-
-        # --- STEP C: IMAGE MATCHING ---
+        # D. IMAGE (10% Bonus)
         img_score = 0
         if target_img_hash and row['image_hash']:
             try:
                 h1 = imagehash.hex_to_hash(target_img_hash)
                 h2 = imagehash.hex_to_hash(row['image_hash'])
-                if (h1 - h2) <= 5: img_score = 100
-                elif (h1 - h2) <= 15: img_score = 80
+                if (h1 - h2) <= 10: img_score = 100
             except: pass
-        
-        if img_score > 0:
-            score = (final_text_score * 0.4) + (img_score * 0.6)
 
-        # --- MATCH THRESHOLD ---
-        # Any score > 75 is a valid match to show
-        if score > 75:
+        # --- CALCULATE FINAL WEIGHTED SCORE ---
+        # Formula: Name(0.6) + Loc(0.25) + Desc(0.05) + Img(0.1)
+        final_score = (name_score * 0.6) + (loc_score * 0.25) + (desc_score * 0.05) + (img_score * 0.1)
+        
+        # --- SMART BOOST ---
+        # If Name is PERFECT (100), ensure score is high even if location is bad
+        if name_score == 100:
+            final_score = max(final_score, 85)
+
+        # --- THRESHOLD ---
+        # Show anything above 60%
+        if final_score > 60:
             matches.append({
                 "id": row['id'],
                 "email": row['email'],
@@ -124,7 +103,7 @@ def check_matches(target_name, target_loc, target_desc, target_img_hash, target_
                 "item_name": row['item_name'],
                 "description": row['description'],
                 "location": row['location'],
-                "score": int(score)
+                "score": int(final_score)
             })
 
     return sorted(matches, key=lambda x: x['score'], reverse=True)
