@@ -68,11 +68,11 @@ def check_matches(target_name, target_loc, target_desc, target_img_hash, target_
         # A. NAME (60%) - Uses token_set_ratio (Handles "Black Wallet" inside "Dark Black Wallet")
         name_score = fuzz.token_set_ratio(my_name, db_name)
         
-        # B. LOCATION (20%) - Uses token_set_ratio (Handles "Benz Circle" inside "Benz Circle, Vijayawada")
+        # B. LOCATION (25%) - Uses token_set_ratio (Handles "Benz Circle" inside "Benz Circle, Vijayawada")
         # Even if "enz circle", score will be decent (e.g. 80-90)
         loc_score = fuzz.token_set_ratio(my_loc, db_loc)
         
-        # C. DESCRIPTION (10%)
+        # C. DESCRIPTION (5%)
         desc_score = fuzz.token_set_ratio(my_desc, db_desc)
         
         # D. IMAGE (10% Bonus)
