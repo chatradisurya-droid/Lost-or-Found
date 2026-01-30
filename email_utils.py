@@ -8,7 +8,7 @@ from email.mime.multipart import MIMEMultipart
 # ==========================================
 SENDER_EMAIL = "chatradi.surya@gmail.com"
 SENDER_PASSWORD = "vkhl nnzd uhcx bpft"  # <--- YOUR 16-DIGIT APP PASSWORD
-APP_LINK = "https://lost-and-found-avdmhmp5rkarxa9qy8ucm2.streamlit.app/"
+APP_LINK = "https://lost-or-found-5vwxappathabkemvybggva.streamlit.app/"
 # ==========================================
 
 def send_email_core(to_email, subject, body):
@@ -55,3 +55,4 @@ def send_match_notification(user_email, match_id, item_name, match_score, contac
     - Lost & Found Team
     """
     send_email_core(user_email, subject, body)
+
