@@ -69,11 +69,11 @@ with st.sidebar:
     st.metric("🪙 Coins", coins)
     st.divider()
     if st.button("🏠 Home"): st.session_state.page="home"; st.rerun()
-    if st.button("📜 History"): st.session_state.page="history"; st.rerun()
+    if st.button("📜 My History"): st.session_state.page="history"; st.rerun()
     st.divider()
     if st.button("🚪 Logout"): logout()
 
-# ================= VERIFY MATCH (THE REWARD LOGIC) =================
+# ================= VERIFY MATCH (FROM EMAIL LINK) =================
 if st.session_state.page == "verify_match":
     st.title("🔍 Verify & Return")
     match_id = st.session_state.deep_link_id
@@ -93,27 +93,11 @@ if st.session_state.page == "verify_match":
                 
                 c1, c2 = st.columns(2)
                 
-                # --- YES BUTTON: REWARD LOGIC ---
                 if c1.button("✅ Yes, Returned!", type="primary", use_container_width=True):
-                    
-                    finder_email = None
-                    
-                    # CASE 1: This is a "FOUND" post.
-                    # The person who posted this (row['email']) is the Finder.
-                    if row['report_type'] == "FOUND":
-                        finder_email = row['email']
-                        
-                    # CASE 2: This is a "LOST" post.
-                    # The person clicking this button (You) must be the finder.
-                    else:
-                        finder_email = st.session_state.user_email_login
-                        
-                    # Reward 100 Coins to the Finder
+                    # Logic: Finder gets coins
+                    finder_email = row['email'] if row['report_type'] == "FOUND" else st.session_state.user_email_login
                     db.add_coins(finder_email, 100)
-                    
-                    # Close the item
                     db.soft_delete_item(match_id)
-                    
                     st.balloons()
                     st.success(f"🎉 Item Closed! 100 Coins rewarded to {finder_email}!")
                     time.sleep(4); st.session_state.page="home"; st.rerun()
@@ -145,14 +129,27 @@ elif st.session_state.page == "home":
                 else: st.success("FOUND")
     else: st.info("No active reports.")
 
-# ================= HISTORY =================
+# ================= HISTORY (WITH MANUAL DELETE) =================
 elif st.session_state.page == "history":
     st.title("📜 My Activity")
     df = db.get_user_history(st.session_state.user_email_login)
-    if not df.empty: st.dataframe(df[["item_name", "location", "status"]])
-    else: st.info("No history.")
+    
+    if not df.empty:
+        for index, row in df.iterrows():
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.write(f"**{row['item_name']}** ({row['report_type']})")
+                    st.caption(f"📍 {row['location']} | {format_date(row['timestamp'])}")
+                    st.caption(f"Status: {row['status']}")
+                with c2:
+                    # MANUAL DELETE BUTTON
+                    if st.button("🗑️ Delete", key=f"del_{row['id']}", use_container_width=True):
+                        db.soft_delete_item(row['id'])
+                        st.rerun()
+    else: st.info("No history yet.")
 
-# ================= FORM (Reporting) =================
+# ================= FORM (Reporting & Matching) =================
 elif st.session_state.page == "form":
     r_type = st.session_state.type
     st.title(f"Report {r_type} Item")
@@ -191,10 +188,12 @@ elif st.session_state.page == "form":
         img_bytes = img.getvalue() if img else None
         img_hash = ai.get_image_hash(img)
         contact = f"{phone} ({email})"
-        db.add_item(r_type, name, loc_string, desc, "Normal", contact, email, img_bytes, img_hash)
+        
+        # 1. Save new post
+        new_id = db.add_item(r_type, name, loc_string, desc, "Normal", contact, email, img_bytes, img_hash)
         st.toast("✅ Saved! +10 Coins!")
 
-        # --- MATCHING ---
+        # 2. MATCHING LOGIC
         st.divider()
         st.subheader("🔎 Analyzing Database for Matches...")
         
@@ -208,26 +207,55 @@ elif st.session_state.page == "form":
             # NOTIFICATION (Threshold 80%)
             if top_match['score'] > 80:
                 st.info(f"🔥 High Match ({top_match['score']}%)! Sending Contact Info...")
-                
-                # Email to ME (Current User)
                 notify.send_match_notification(email, top_match['id'], name, top_match['score'], top_match['contact_info'])
-                # Email to THEM (Matched User)
                 notify.send_match_notification(top_match['email'], top_match['id'], name, top_match['score'], contact)
-                
                 st.toast("📧 Contact Details Sent!")
             
-            # Display Matches
+            # DISPLAY MATCHES WITH "RESOLVE" BUTTONS
             for match in matches:
                 with st.container(border=True):
-                    c_a, c_b = st.columns([4, 1])
+                    c_a, c_b = st.columns([3, 1])
                     with c_a:
                         st.markdown(f"**{match['item_name']}**")
                         st.write(f"📍 {match['location']}")
                         st.caption(match['description'])
-                    with c_b:
+                        
+                        # Show score
                         score = match['score']
                         color = "green" if score > 80 else "orange"
-                        st.markdown(f"<h2 style='color:{color}'>{score}%</h2>", unsafe_allow_html=True)
+                        st.markdown(f"<span style='color:{color}; font-weight:bold;'>Match: {score}%</span>", unsafe_allow_html=True)
+
+                    with c_b:
+                        # --- RESOLVE BUTTON AT BOTTOM RIGHT ---
+                        st.write("") # Spacer
+                        st.write("") # Spacer
+                        
+                        # Determine Button Label
+                        btn_label = "✅ Item Received" if r_type == "LOST" else "↩️ Item Returned"
+                        
+                        if st.button(btn_label, key=f"resolve_{match['id']}", use_container_width=True):
+                            # LOGIC:
+                            # 1. Who is the finder?
+                            # If I am LOST user, looking at FOUND post -> Match User is Finder
+                            # If I am FOUND user, looking at LOST post -> I am Finder
+                            
+                            finder_email = match['email'] if r_type == "LOST" else email
+                            
+                            # 2. Reward Finder
+                            db.add_coins(finder_email, 100)
+                            
+                            # 3. DELETE BOTH POSTS (Soft Delete)
+                            # Delete the matched older post
+                            db.soft_delete_item(match['id'])
+                            # Delete the post I just made (new_id)
+                            db.soft_delete_item(new_id)
+                            
+                            st.balloons()
+                            st.success(f"Transaction Complete! Posts Deleted. 100 Coins to {finder_email}")
+                            time.sleep(4)
+                            st.session_state.page = "home"
+                            st.rerun()
+
         else:
             st.info("No similar items found yet.")
             time.sleep(4); st.session_state.page="home"; st.rerun()
