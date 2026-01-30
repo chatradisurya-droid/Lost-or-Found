@@ -7,10 +7,11 @@ import locations as loc_data
 import time
 from datetime import datetime
 
+# 1. PAGE CONFIG
 st.set_page_config(page_title="Lost and Found", layout="centered")
 st.markdown("""<style>[data-testid="stSidebarNav"] { display: none !important; }</style>""", unsafe_allow_html=True)
 
-# --- INIT ---
+# 2. INIT STATE
 if "db_initialized" not in st.session_state:
     db.init_db(); st.session_state.db_initialized = True
 if "logged_in" not in st.session_state:
@@ -18,7 +19,7 @@ if "logged_in" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "home"
 
-# DEEP LINK
+# 3. DEEP LINK HANDLER
 if "match_id" in st.query_params:
     st.session_state.page = "verify_match"
     st.session_state.deep_link_id = st.query_params["match_id"]
@@ -72,7 +73,7 @@ with st.sidebar:
     st.divider()
     if st.button("🚪 Logout"): logout()
 
-# ================= VERIFY MATCH (REWARD LOGIC) =================
+# ================= VERIFY MATCH (THE REWARD LOGIC) =================
 if st.session_state.page == "verify_match":
     st.title("🔍 Verify & Return")
     match_id = st.session_state.deep_link_id
@@ -88,24 +89,26 @@ if st.session_state.page == "verify_match":
                 st.write(f"📝 {row['description']}")
                 st.info(f"📞 Contact: {row['contact_info']}")
                 st.divider()
-                st.write("Has this item been successfully returned/verified?")
+                st.write("Has this item been successfully returned?")
                 
                 c1, c2 = st.columns(2)
                 
-                # --- YES BUTTON: GIVE 100 COINS ---
+                # --- YES BUTTON: REWARD LOGIC ---
                 if c1.button("✅ Yes, Returned!", type="primary", use_container_width=True):
                     
-                    # LOGIC: Who gets the coins? The Finder.
-                    # If this item was 'FOUND', the person who posted it (row['email']) is the finder.
-                    # If this item was 'LOST', the person clicking (current user) is the finder.
-                    
                     finder_email = None
+                    
+                    # CASE 1: This is a "FOUND" post.
+                    # The person who posted this (row['email']) is the Finder.
                     if row['report_type'] == "FOUND":
                         finder_email = row['email']
+                        
+                    # CASE 2: This is a "LOST" post.
+                    # The person clicking this button (You) must be the finder.
                     else:
                         finder_email = st.session_state.user_email_login
                         
-                    # Reward 100 Coins
+                    # Reward 100 Coins to the Finder
                     db.add_coins(finder_email, 100)
                     
                     # Close the item
@@ -202,9 +205,9 @@ elif st.session_state.page == "form":
             top_match = matches[0]
             st.success(f"We found {len(matches)} potential matches!")
             
-            # NOTIFICATION (With Contact Info Directly)
+            # NOTIFICATION (Threshold 80%)
             if top_match['score'] > 80:
-                st.info(f"🔥 High Match ({top_match['score']}%)! Sending details to email...")
+                st.info(f"🔥 High Match ({top_match['score']}%)! Sending Contact Info...")
                 
                 # Email to ME (Current User)
                 notify.send_match_notification(email, top_match['id'], name, top_match['score'], top_match['contact_info'])
@@ -213,7 +216,7 @@ elif st.session_state.page == "form":
                 
                 st.toast("📧 Contact Details Sent!")
             
-            # Display
+            # Display Matches
             for match in matches:
                 with st.container(border=True):
                     c_a, c_b = st.columns([4, 1])
