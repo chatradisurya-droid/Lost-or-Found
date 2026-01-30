@@ -1,11 +1,7 @@
 import sqlite3
 import pandas as pd
 
-DB_NAME = "campus_lost_found_v3.db"
-
-def init_db_connection():
-    """Helper for app.py to get raw connection"""
-    return sqlite3.connect(DB_NAME)
+DB_NAME = "campus_lost_found_v4.db"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -18,8 +14,6 @@ def init_db():
                     sensitivity TEXT, contact_info TEXT, email TEXT, image_blob BLOB, 
                     image_hash TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, 
                     status TEXT DEFAULT 'OPEN', is_active BOOLEAN DEFAULT 1)''')
-    try: c.execute("SELECT coins FROM users LIMIT 1")
-    except: c.execute("ALTER TABLE users ADD COLUMN coins INTEGER DEFAULT 100")
     conn.commit()
     conn.close()
 
@@ -46,6 +40,14 @@ def get_user_coins(email):
     res = c.fetchone(); conn.close()
     return res[0] if res else 0
 
+def add_coins(email, amount):
+    """Rewards the user with coins (e.g., 100 for returning an item)"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE users SET coins = coins + ? WHERE email = ?", (amount, email))
+    conn.commit()
+    conn.close()
+
 def add_item(report_type, name, location, description, sensitivity, contact, email, img_blob, img_hash):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -53,9 +55,13 @@ def add_item(report_type, name, location, description, sensitivity, contact, ema
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
               (report_type, name, location, description, sensitivity, contact, email, img_blob, img_hash))
     new_id = c.lastrowid
+    # We give 10 coins just for posting (Participation Reward)
     c.execute("UPDATE users SET coins = coins + 10 WHERE email = ?", (email,))
     conn.commit(); conn.close()
     return new_id
+
+def init_db_connection():
+    return sqlite3.connect(DB_NAME)
 
 def get_all_active_items():
     conn = sqlite3.connect(DB_NAME)
@@ -72,7 +78,7 @@ def get_user_history(email):
 def soft_delete_item(item_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("UPDATE items SET is_active = 0 WHERE id = ?", (item_id,))
+    c.execute("UPDATE items SET is_active = 0, status='RESOLVED' WHERE id = ?", (item_id,))
     conn.commit(); conn.close()
     
 def check_duplicate_post(email, r_type, name):
@@ -81,4 +87,3 @@ def check_duplicate_post(email, r_type, name):
     c.execute("SELECT id FROM items WHERE email=? AND report_type=? AND item_name=? AND is_active=1", (email, r_type, name))
     found = c.fetchone(); conn.close()
     return found is not None
-
