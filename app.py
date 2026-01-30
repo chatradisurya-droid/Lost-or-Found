@@ -18,19 +18,19 @@ if "logged_in" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "home"
 
-# Deep Link Logic
+# DEEP LINK
 if "match_id" in st.query_params:
     st.session_state.page = "verify_match"
     st.session_state.deep_link_id = st.query_params["match_id"]
-
-def format_date(ts):
-    try: return datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S").strftime("%b %d, %Y")
-    except: return str(ts)
 
 def logout():
     st.session_state.logged_in = False
     st.session_state.page = "home"
     st.rerun()
+
+def format_date(ts):
+    try: return datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S").strftime("%b %d, %Y")
+    except: return str(ts)
 
 # ================= LOGIN =================
 if not st.session_state.logged_in:
@@ -72,9 +72,9 @@ with st.sidebar:
     st.divider()
     if st.button("🚪 Logout"): logout()
 
-# ================= VERIFY MATCH (Deep Link) =================
+# ================= VERIFY MATCH (REWARD LOGIC) =================
 if st.session_state.page == "verify_match":
-    st.title("🔍 Verify Match")
+    st.title("🔍 Verify & Return")
     match_id = st.session_state.deep_link_id
     conn = db.init_db_connection()
     try:
@@ -83,20 +83,42 @@ if st.session_state.page == "verify_match":
         if not item.empty:
             row = item.iloc[0]
             with st.container(border=True):
-                st.markdown(f"### Is this your item: {row['item_name']}?")
+                st.markdown(f"### {row['item_name']}")
                 st.write(f"📍 {row['location']}")
                 st.write(f"📝 {row['description']}")
+                st.info(f"📞 Contact: {row['contact_info']}")
                 st.divider()
+                st.write("Has this item been successfully returned/verified?")
+                
                 c1, c2 = st.columns(2)
-                if c1.button("✅ Yes, It's Mine!", type="primary"):
-                    notify.send_contact_share_email(st.session_state.user_email_login, row['item_name'], row['contact_info'])
+                
+                # --- YES BUTTON: GIVE 100 COINS ---
+                if c1.button("✅ Yes, Returned!", type="primary", use_container_width=True):
+                    
+                    # LOGIC: Who gets the coins? The Finder.
+                    # If this item was 'FOUND', the person who posted it (row['email']) is the finder.
+                    # If this item was 'LOST', the person clicking (current user) is the finder.
+                    
+                    finder_email = None
+                    if row['report_type'] == "FOUND":
+                        finder_email = row['email']
+                    else:
+                        finder_email = st.session_state.user_email_login
+                        
+                    # Reward 100 Coins
+                    db.add_coins(finder_email, 100)
+                    
+                    # Close the item
+                    db.soft_delete_item(match_id)
+                    
                     st.balloons()
-                    st.success("Contact sent to your email!")
-                    time.sleep(3); st.session_state.page="home"; st.rerun()
-                if c2.button("❌ No"):
+                    st.success(f"🎉 Item Closed! 100 Coins rewarded to {finder_email}!")
+                    time.sleep(4); st.session_state.page="home"; st.rerun()
+                    
+                if c2.button("❌ No", use_container_width=True):
                     st.session_state.page="home"; st.rerun()
-        else: st.error("Item not found.")
-    except: st.error("Error loading.")
+        else: st.error("Item not found or already closed.")
+    except: st.error("Error loading item.")
 
 # ================= HOME =================
 elif st.session_state.page == "home":
@@ -136,7 +158,7 @@ elif st.session_state.page == "form":
     c1, c2 = st.columns(2)
     with c1: 
         name = st.text_input("Item Name (e.g., Black Wallet)")
-        # Location logic
+        # Location
         states = list(loc_data.INDIA_LOCATIONS.keys())
         state = st.selectbox("State", states)
         cities = list(loc_data.INDIA_LOCATIONS[state].keys())
@@ -159,21 +181,17 @@ elif st.session_state.page == "form":
     desc = st.text_area("Description", value=desc_val)
     img = st.file_uploader("Image", ["jpg","png"])
     
-    # --- SUBMIT & MATCH ---
+    # --- SUBMIT ---
     if st.button(f"🚀 Submit {r_type} Report", type="primary"):
         if not (name and phone): st.error("Fill Name and Phone"); st.stop()
         
-        # 1. Save
         img_bytes = img.getvalue() if img else None
         img_hash = ai.get_image_hash(img)
         contact = f"{phone} ({email})"
         db.add_item(r_type, name, loc_string, desc, "Normal", contact, email, img_bytes, img_hash)
-        st.toast("✅ Saved!")
+        st.toast("✅ Saved! +10 Coins!")
 
-        # 2. RUN AI MATCHING
-        # ... inside if submitted: ...
-
-        # 2. MATCHING LOGIC
+        # --- MATCHING ---
         st.divider()
         st.subheader("🔎 Analyzing Database for Matches...")
         
@@ -182,15 +200,20 @@ elif st.session_state.page == "form":
         
         if matches:
             top_match = matches[0]
-            st.success(f"We found {len(matches)} similar items!")
+            st.success(f"We found {len(matches)} potential matches!")
             
-            # NOTIFICATION (Threshold > 80%)
+            # NOTIFICATION (With Contact Info Directly)
             if top_match['score'] > 80:
-                st.info(f"🔥 High Match ({top_match['score']}%)! Sending verification emails...")
-                notify.send_verification_link(email, top_match['id'], name, top_match['score'])
-                notify.send_verification_link(top_match['email'], top_match['id'], name, top_match['score'])
+                st.info(f"🔥 High Match ({top_match['score']}%)! Sending details to email...")
+                
+                # Email to ME (Current User)
+                notify.send_match_notification(email, top_match['id'], name, top_match['score'], top_match['contact_info'])
+                # Email to THEM (Matched User)
+                notify.send_match_notification(top_match['email'], top_match['id'], name, top_match['score'], contact)
+                
+                st.toast("📧 Contact Details Sent!")
             
-            # Display Matches
+            # Display
             for match in matches:
                 with st.container(border=True):
                     c_a, c_b = st.columns([4, 1])
@@ -203,8 +226,5 @@ elif st.session_state.page == "form":
                         color = "green" if score > 80 else "orange"
                         st.markdown(f"<h2 style='color:{color}'>{score}%</h2>", unsafe_allow_html=True)
         else:
-            st.info("No similar items found yet. We will notify you if one appears.")
-            time.sleep(4)
-            st.session_state.page = "home"
-            st.rerun()
-
+            st.info("No similar items found yet.")
+            time.sleep(4); st.session_state.page="home"; st.rerun()
